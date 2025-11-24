@@ -9,14 +9,14 @@ if _KEY is None:
 KEY = _KEY.encode()
 _CIPHER = Fernet(KEY)
 
-
+#encrypt data using the key
 def encrypt_data(plaintext: str) -> str:
     if isinstance(plaintext, str):
         plaintext = plaintext.encode("utf-8")
     token = _CIPHER.encrypt(plaintext)
     return token.decode("utf-8")
 
-
+#decrypt data using the key
 def decrypt_data(token: str) -> str:
     if isinstance(token, str):
         token = token.encode("utf-8")
@@ -26,7 +26,7 @@ def decrypt_data(token: str) -> str:
     except InvalidToken as e:
         raise
 
-
+#compute audit hash
 def compute_audit_hash(plaintext: str, ciphertext: str) -> str:
     if not isinstance(plaintext, str):
         plaintext = str(plaintext)

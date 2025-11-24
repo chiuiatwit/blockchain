@@ -7,6 +7,8 @@ from uuid import uuid4
 import requests
 from flask import Flask, jsonify, request
 
+from blockchain.security import encrypt_text, decrypt_text, compute_audit_hash
+from cryptography.fernet import InvalidToken
 
 class Blockchain:
     def __init__(self):
@@ -47,14 +49,20 @@ class Blockchain:
 
         while current_index < len(chain):
             block = chain[current_index]
-            print(f'{last_block}')
-            print(f'{block}')
-            print("\n-----------\n")
+            
             # Check that the hash of the block is correct
             last_block_hash = self.hash(last_block)
             if block['previous_hash'] != last_block_hash:
                 return False
-
+            if not self.valid_proof(last_block['proof'], block['proof'], last_block_hash):
+                return False
+            if 'transactions_encrypted' in block:
+                ciphertext = block['transactions_encrypted']
+            try:
+                    plaintext_json = decrypt_text(ciphertext)
+                except InvalidToken:
+                    return False
+            
             # Check that the Proof of Work is correct
             if not self.valid_proof(last_block['proof'], block['proof'], last_block_hash):
                 return False
