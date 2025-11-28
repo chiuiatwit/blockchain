@@ -7,7 +7,7 @@ from uuid import uuid4
 import requests
 from flask import Flask, jsonify, request
 
-from blockchain.security import encrypt_text, decrypt_text, compute_audit_hash
+from security import encrypt_text, decrypt_text, compute_audit_hash
 from cryptography.fernet import InvalidToken
 
 class Blockchain:
@@ -49,23 +49,37 @@ class Blockchain:
 
         while current_index < len(chain):
             block = chain[current_index]
-            
-            # Check that the hash of the block is correct
+
+            # If the previous block stored a hash, make sure it matches its computed hash
+            if 'hash' in last_block:
+                if last_block['hash'] != self.hash(last_block):
+                    return False
+
+            # Recompute hash of the last block and compare with this block's previous_hash
             last_block_hash = self.hash(last_block)
-            if block['previous_hash'] != last_block_hash:
+            if block.get('previous_hash') != last_block_hash:
                 return False
+
+            # Verify proof of work
             if not self.valid_proof(last_block['proof'], block['proof'], last_block_hash):
                 return False
-            if 'transactions_encrypted' in block:
+
+            # If encrypted payload exists, ensure it decrypts correctly and audit matches
+            if 'transactions_encrypted' in block and 'transactions_plaintext_audit' in block:
                 ciphertext = block['transactions_encrypted']
-            try:
+                try:
                     plaintext_json = decrypt_text(ciphertext)
                 except InvalidToken:
                     return False
-            
-            # Check that the Proof of Work is correct
-            if not self.valid_proof(last_block['proof'], block['proof'], last_block_hash):
-                return False
+
+                expected_audit = compute_audit_hash(plaintext_json, ciphertext)
+                if expected_audit != block.get('transactions_plaintext_audit'):
+                    return False
+
+            # If the block stores its own hash, ensure it matches the recomputed value
+            if 'hash' in block:
+                if block['hash'] != self.hash(block):
+                    return False
 
             last_block = block
             current_index += 1
@@ -115,10 +129,16 @@ class Blockchain:
         :return: New Block
         """
 
+        plaintext_json = json.dumps(self.current_transactions, sort_keys=True)
+        ciphertext = encrypt_text(plaintext_json)
+        audit = compute_audit_hash(plaintext_json, ciphertext)
+
         block = {
             'index': len(self.chain) + 1,
             'timestamp': time(),
-            'transactions': self.current_transactions,
+            'transactions': [],
+            'transactions_encrypted': ciphertext,
+            'transactions_plaintext_audit': audit,
             'proof': proof,
             'previous_hash': previous_hash or self.hash(self.chain[-1]),
         }
@@ -128,6 +148,23 @@ class Blockchain:
 
         self.chain.append(block)
         return block
+
+    # Convenience methods to satisfy the CIA test interface
+    def add_block(self, plaintext_str: str):
+        """Add a block whose payload is the provided plaintext string (encrypted internally)."""
+        # store the plaintext as a single-entry transaction for encryption
+        self.current_transactions = [plaintext_str]
+        last_block = self.last_block
+        proof = self.proof_of_work(last_block)
+        previous_hash = self.hash(last_block)
+        new_block = self.new_block(proof, previous_hash)
+        # compute and store the block's own hash for easier tampering simulation
+        new_block['hash'] = self.hash(new_block)
+        return new_block
+
+    def is_chain_valid(self) -> bool:
+        """Public method to validate the local chain."""
+        return self.valid_chain(self.chain)
 
     def new_transaction(self, sender, recipient, amount):
         """
@@ -157,9 +194,11 @@ class Blockchain:
 
         :param block: Block
         """
-
         # We must make sure that the Dictionary is Ordered, or we'll have inconsistent hashes
-        block_string = json.dumps(block, sort_keys=True).encode()
+        # Exclude any stored 'hash' field from the computation so we can detect tampering
+        block_copy = dict(block)
+        block_copy.pop('hash', None)
+        block_string = json.dumps(block_copy, sort_keys=True).encode()
         return hashlib.sha256(block_string).hexdigest()
 
     def proof_of_work(self, last_block):
@@ -230,7 +269,7 @@ def mine():
     response = {
         'message': "New Block Forged",
         'index': block['index'],
-        'transactions': block['transactions'],
+        'transactions_encrypted': block['transactions_encrypted'],
         'proof': block['proof'],
         'previous_hash': block['previous_hash'],
     }
@@ -243,7 +282,7 @@ def new_transaction():
 
     # Check that the required fields are in the POST'ed data
     required = ['sender', 'recipient', 'amount']
-    if not all(k in values for k in required):
+    if not values or not all(k in values for k in required):
         return 'Missing values', 400
 
     # Create a new Transaction

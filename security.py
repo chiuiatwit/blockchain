@@ -34,3 +34,12 @@ def compute_audit_hash(plaintext: str, ciphertext: str) -> str:
         ciphertext = str(ciphertext)
     s = plaintext + "|" + ciphertext
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
+
+# Backwards-compatible aliases expected by other modules
+# older code imports encrypt_text/decrypt_text
+def encrypt_text(plaintext: str) -> str:
+    return encrypt_data(plaintext)
+
+
+def decrypt_text(token: str) -> str:
+    return decrypt_data(token)
